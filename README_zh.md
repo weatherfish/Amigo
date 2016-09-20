@@ -13,7 +13,7 @@ Amigo
 
    ```groovy
    dependencies {
-     classpath 'me.ele:amigo:0.0.8'
+     classpath 'me.ele:amigo:0.1.0'
    }
    ```
 
@@ -33,9 +33,6 @@ Amigo
    	如果不想立即生效而是用户第二次打开App 时才打入补丁包，第二次打开时就会自动生效。可以通过这个方法
    	
 	```java
-	File hotfixApk = Amigo.getHotfixApk(context);
-	FileUtils.copyFile(yourApkFile, hotfixApk);
-	
     Amigo.workLater(context);
 
     Amigo.workLater(context, apkFile);
@@ -78,10 +75,20 @@ Amigo.clear(context);
   android:value="{your-theme-name}" />
 ```
 
-### 组件修复
-
-Amigo 目前能够支持修复Activity 和BroadcastReceiver。只需要将新的Activity 和BroadcastReceiver 加到新的Apk 包中就可以了。Service 和ContentProvider 将会在未来的版本中支持更新。
-
+### 局限
+ - 新的apk中仅支持新增 `activity` & `receiver`, `service` & `provider`暂时不支持
+       ```groovy
+       classpath 'me.ele:amigo:0.0.6-beta1'
+       ...
+      ```
+ - launcher activity的全类名暂时不支持修改
+ 
+ - `notification` & `widget`中`RemoteViews`的自定义布局不支持修改,只支持内容修复
+ 
+ - 可能会和google play上架协议有冲突
+ 
+ - **唯一的限制就是你的想象力**
+ 
 代码样例
 ----
 
@@ -89,7 +96,7 @@ Amigo 目前能够支持修复Activity 和BroadcastReceiver。只需要将新的
    1. ./gradlew clean assembleRelease & adb install .../build/outputs/apk/app-release.apk
    2. 改动代码 & ./gradlew clean assembleRelease
    3. adb push .../build/outputs/apk/app-release.apk /sdcard/demo.apk
-   4. 手动杀掉Amigo demo，重启检查是否代码已经生效
+   4. 点击"apply patch apk"按钮, 加载新的apk
    
 ### 下载hotfix文件
 

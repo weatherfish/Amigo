@@ -3,14 +3,13 @@ package me.ele.amigo
 import com.android.build.gradle.api.ApkVariant
 import com.android.build.gradle.api.BaseVariantOutput
 import groovy.io.FileType
-import groovy.xml.Namespace
+import groovy.xml.QName
 import groovy.xml.XmlUtil
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
-import org.gradle.api.tasks.compile.JavaCompile
 
 import java.util.jar.JarEntry
 import java.util.jar.JarFile
@@ -27,7 +26,7 @@ class AmigoPlugin implements Plugin<Project> {
     void apply(Project project) {
 
         Configuration configuration = project.rootProject.buildscript.configurations.getByName(
-            'classpath')
+                'classpath')
         configuration.allDependencies.all { Dependency dependency ->
             if (dependency.group == GROUP && dependency.name == NAME) {
                 version = dependency.version
@@ -46,6 +45,13 @@ class AmigoPlugin implements Plugin<Project> {
         project.plugins.withId('com.android.application') {
             project.android.applicationVariants.all { ApkVariant variant ->
 
+                // check instant run which conflicts with us
+                println 'check instant run'
+                Task instantRunTask = project.tasks.findByName("transformClassesWithInstantRunVerifierFor${variant.name.capitalize()}")
+                if (instantRunTask) {
+                    throw RuntimeException("Sorry, instant run conflicts with Amigo, so please disable Instant Run")
+                }
+
                 Task prepareDependencyTask = project.tasks.findByName("prepare${variant.name.capitalize()}Dependencies")
                 prepareDependencyTask.doFirst {
                     clearAmigoDependency(project)
@@ -54,6 +60,7 @@ class AmigoPlugin implements Plugin<Project> {
                 variant.outputs.each { BaseVariantOutput output ->
 
                     def applicationName = null
+                    def generateCodeTask;
                     File manifestFile = output.processManifest.manifestOutputFile
                     if (manifestFile.exists()) {
                         manifestFile.delete()
@@ -61,10 +68,6 @@ class AmigoPlugin implements Plugin<Project> {
 
                     output.processManifest.doLast {
                         manifestFile = output.processManifest.manifestOutputFile
-                        applicationName = getAppName(manifestFile)
-                        println 'app name: ' + applicationName
-
-                        manifestFile.text = manifestFile.text.replace(applicationName, "me.ele.amigo.Amigo")
 
                         //fake original application as an activity, so it will be in main dex
                         Node node = (new XmlParser()).parse(manifestFile)
@@ -75,80 +78,41 @@ class AmigoPlugin implements Plugin<Project> {
                                 break
                             }
                         }
+
+                        QName nameAttr = new QName("http://schemas.android.com/apk/res/android", 'name', 'android');
+                        applicationName = appNode.attribute(nameAttr)
+                        if (applicationName == null || applicationName.isEmpty()) {
+                            applicationName = "android.app.Application"
+                        }
+                        appNode.attributes().put(nameAttr, "me.ele.amigo.Amigo")
+
                         Node hackAppNode = new Node(appNode, "activity")
                         hackAppNode.attributes().put("android:name", applicationName)
                         manifestFile.text = XmlUtil.serialize(node)
+
+                        generateCodeTask = project.tasks.create(
+                                name: "generate${variant.name.capitalize()}ApplicationInfo",
+                                type: GenerateCodeTask) {
+                            variantDirName variant.dirName
+                            appName applicationName
+                        }
+                        generateCodeTask.execute()
+                        println "generateCodeTask execute"
                     }
 
-                    if (hasProguard(project, variant)) {
-                        getProguardTask(project, variant).doLast {
-                            variant.mappingFile.eachLine { line ->
-                                if (!line.startsWith(" ")) {
-                                    String[] keyValue = line.split("->");
-                                    String key = keyValue[0].trim()
-                                    String value = keyValue[1].subSequence(0, keyValue[1].length() - 1).trim()
-                                    if (key.equals(applicationName)) {
-                                        applicationName = value
-                                    }
-                                }
-                            }
+                    variant.javaCompile.doFirst {
+                        variant.javaCompile.source generateCodeTask.outputDir()
+                    }
 
-                            GenerateCodeTask generateCodeTask = project.tasks.create(
-                                    name: "generate${variant.name.capitalize()}ApplicationInfo",
-                                    type: GenerateCodeTask) {
-                                variantDirName variant.dirName
-                                appName applicationName
-                            }
-                            generateCodeTask.execute()
-
-                            String taskName = "compile${variant.name.capitalize()}CodeForApp"
-                            def javac = variant.javaCompiler
-                            project.task(type: JavaCompile, overwrite: true, taskName) { JavaCompile jc ->
-                                jc.source generateCodeTask.outputDir()
-                                jc.destinationDir javac.destinationDir
-                                jc.classpath = project.files(new File(((JavaCompile) javac).options.bootClasspath))
-                                jc.sourceCompatibility javac.sourceCompatibility
-                                jc.targetCompatibility javac.targetCompatibility
-                            }
-                            project.tasks.getByName(taskName).execute()
-
-                            String entryName = "me/ele/amigo/acd.class"
-                            def classAddress = "${variant.javaCompiler.destinationDir}/${entryName}"
-                            //add acd class into main.jar
-                            File[] files = new File[1]
-                            files[0] = new File(classAddress)
-                            String proguardDir = "${project.buildDir}/intermediates/transforms/proguard/${variant.flavorName}"
-                            File mainJarFile = new File(Util.findFileInDir("main.jar", proguardDir))
-                            Util.deleteZipEntry(mainJarFile, [entryName])
-                            Util.addFilesToExistingZip(mainJarFile, files, entryName)
-
+                    if (!hasProguard(project, variant)) {
+                        variant.javaCompile.doLast {
                             if (hasMultiDex(project, variant)) {
                                 collectMultiDexInfo(project, variant)
                                 generateKeepFiles(project, variant)
                             }
                         }
                     } else {
-                        variant.javaCompile.doLast {
-                            GenerateCodeTask generateCodeTask = project.tasks.create(
-                                    name: "generate${variant.name.capitalize()}ApplicationInfo",
-                                    type: GenerateCodeTask) {
-                                variantDirName variant.dirName
-                                appName applicationName
-                            }
-                            generateCodeTask.execute()
-                            println "generateCodeTask execute"
-
-                            String taskName = "compile${variant.name.capitalize()}CodeForApp"
-                            def javac = variant.javaCompiler
-                            project.task(type: JavaCompile, overwrite: true, taskName) { JavaCompile jc ->
-                                jc.source generateCodeTask.outputDir()
-                                jc.destinationDir javac.destinationDir
-                                jc.classpath = project.files(new File(((JavaCompile) javac).options.bootClasspath))
-                                jc.sourceCompatibility javac.sourceCompatibility
-                                jc.targetCompatibility javac.targetCompatibility
-                            }
-                            project.tasks.getByName(taskName).execute()
-
+                        getProguardTask(project, variant).doLast {
                             if (hasMultiDex(project, variant)) {
                                 collectMultiDexInfo(project, variant)
                                 generateKeepFiles(project, variant)
@@ -165,15 +129,6 @@ class AmigoPlugin implements Plugin<Project> {
         if (jarPath.exists()) {
             jarPath.delete()
         }
-    }
-
-    String getAppName(File manifestFile) {
-        def manifest = new XmlParser().parse(manifestFile)
-        def androidTag = new Namespace("http://schemas.android.com/apk/res/android", 'android')
-        if (manifestFile.exists()) {
-            return manifest.application[0].attribute(androidTag.name)
-        }
-        return null
     }
 
     void collectMultiDexInfo(Project project, ApkVariant variant) {

@@ -12,7 +12,7 @@ In your project's `build.gradle`
 
 ```groovy
 dependencies {
-  classpath 'me.ele:amigo:0.0.8'
+  classpath 'me.ele:amigo:0.1.0'
 }
 ```
 In your module's `build.gradle`
@@ -25,7 +25,7 @@ you are good to go now, as simple as this.
 
 ### notice 
 
-sync with jcenter may take some time, if amigo cannot be found, please add my private maven url into your buildscript
+* sync with jcenter may take some time, if amigo cannot be found, please add my private maven url into your buildscript
 
 ```groovy
 buildscript {
@@ -39,6 +39,8 @@ buildscript {
 }
 ```
 
+* Instant Run conflicts with Amigo, so disable Instant Run when used with amigo
+
 ### to make hotfix work
 There are two ways to make hotfix work.
 
@@ -48,11 +50,8 @@ There are two ways to make hotfix work.
 	when app restarts next time, hotfix apk will be loaded as fresh as new.
 
 	```java
-	File hotfixApk = Amigo.getHotfixApk(context);
-	FileUtils.copyFile(yourApkFile, hotfixApk);
-	
     Amigo.workLater(context);
-
+    // or
     Amigo.workLater(context, apkFile);
     ```
 
@@ -60,17 +59,17 @@ There are two ways to make hotfix work.
 
 	```java
 	Amigo.work(context);
-
+    // or
 	Amigo.work(context, apkFile);
 	```
 
 
-### maybe hotfix needs to be cleared
+### clear the previously installed patch-apk manually
 
 ```java
 Amigo.clear(context);
 ```
-**note**：if apk has changed we will automatic clear the old apk.
+**note**：The old apk would be cleared automatically when the latest version updated.
 
 ### customize the fix layout
 some time-tense operation is handled in a new process with an activity, you may customize it
@@ -86,20 +85,20 @@ some time-tense operation is handled in a new process with an activity, you may 
 
 ```
 
-### load new Activity and BroadcastReceiver
-
-you can add activities & receivers whatever you like to add in your hotfix apk,
-waiting for **Service** & **ContentProvider**
-
-if you would like to RTFC, please checkout **support_new_added_components** branch
-
-this's in **beta** version for now, so you may use this
-
-```groovy
- classpath 'me.ele:amigo:0.0.6-beta1'
- ...
-
-```
+### limitations
+ - support new `activity` & `receiver` in beta, `service` & `provider` is not supported for now
+ 
+     ```groovy
+      classpath 'me.ele:amigo:0.0.6-beta1'
+      ...
+     ```
+ - app launcher activity's name cannot be changed
+ 
+ - `RemoteViews`'s layout change in `notification` & `widget`is not support 
+ 
+ - may conflict with google play terms
+ 
+ - **the only limit is your imagination**
 
 play with demo
 ----
@@ -110,7 +109,7 @@ also you can play with this app demo following the procedures below.
    1. ./gradlew clean assembleRelease & adb install .../build/outputs/apk/app-release.apk
    2. change code wherever you like & ./gradlew clean assembleRelease
    3. adb push .../build/outputs/apk/app-release.apk /sdcard/demo.apk
-   4. kill Amigo demo by yourself & restart to check if your change works
+   4. click the "apply patch apk" button, and see the changes you made then.
    
 ### retrieve hotfix file
 
