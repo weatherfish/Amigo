@@ -12,7 +12,7 @@ In your project's `build.gradle`
 
 ```groovy
 dependencies {
-  classpath 'me.ele:amigo:0.1.0'
+  classpath 'me.ele:amigo:0.4.2'
 }
 ```
 In your module's `build.gradle`
@@ -23,25 +23,29 @@ In your module's `build.gradle`
 
 you are good to go now, as simple as this.
 
-### notice 
+## Demo
+There is a app module sub project. And there is an Demo page in the app demonstrating how to apply patch apk. Please ref the usage.
+Run the task `./gradlew runHost preparePatch`. And go to the `demo` page.
 
-* sync with jcenter may take some time, if amigo cannot be found, please add my private maven url into your buildscript
+## Development
+#### Process
+There are two gradle tasks provided in the app/build.gradle, `:app:runHost`, `:app:preparePatch`, which can accelerate development.
 
-```groovy
-buildscript {
-    repositories {
-        maven {
-            url "https://dl.bintray.com/jackcho/maven"
-        }
-        jcenter()
-        ...
-    }
-}
-```
+* `./gradlew runHost`, launch the host app
+* `./gradlew preparePatch`, build and push the patch apk to the device
+* apply the patch apk in the Demo page
+
+#### Gradle plugin
+The plugin was put into buildSrc directory, which means the plugin code change will work immediately each time you build.
+
+#### amigo lib
+The gradle plugin would select right amigo lib automatically. In the development mode, the amigo-lib module will be used.
+
+## notice
 
 * Instant Run conflicts with Amigo, so disable Instant Run when used with amigo
 
-### to make hotfix work
+#### to make hotfix work
 There are two ways to make hotfix work.
 
 * if you don't need hotfix work immediately
@@ -50,28 +54,24 @@ There are two ways to make hotfix work.
 	when app restarts next time, hotfix apk will be loaded as fresh as new.
 
 	```java
-    Amigo.workLater(context);
-    // or
-    Amigo.workLater(context, apkFile);
+    Amigo.workLater(context, patchApkFile);
     ```
 
 * work immediately, app will restart immediately
 
 	```java
-	Amigo.work(context);
-    // or
-	Amigo.work(context, apkFile);
+	Amigo.work(context, patchApkFile);
 	```
 
-
-### clear the previously installed patch-apk manually
+### disable working patch apk
 
 ```java
 Amigo.clear(context);
 ```
-**note**：The old apk would be cleared automatically when the latest version updated.
+**note**：When the main process is restarted the host apk will be used and all patch files will be deleted.
 
-### customize the fix layout
+
+## customize the fix layout
 some time-tense operation is handled in a new process with an activity, you may customize it
 
 ```xml
@@ -85,13 +85,9 @@ some time-tense operation is handled in a new process with an activity, you may 
 
 ```
 
-### limitations
- - support new `activity` & `receiver` in beta, `service` & `provider` is not supported for now
- 
-     ```groovy
-      classpath 'me.ele:amigo:0.0.6-beta1'
-      ...
-     ```
+## limitations
+ - new added `provider` is not supported for now
+
  - app launcher activity's name cannot be changed
  
  - `RemoteViews`'s layout change in `notification` & `widget`is not support 
@@ -100,23 +96,19 @@ some time-tense operation is handled in a new process with an activity, you may 
  
  - **the only limit is your imagination**
 
-play with demo
-----
-
-if you try to experience Amigo's magic, you can integrate with your own app as you like;
-also you can play with this app demo following the procedures below.
-
-   1. ./gradlew clean assembleRelease & adb install .../build/outputs/apk/app-release.apk
-   2. change code wherever you like & ./gradlew clean assembleRelease
-   3. adb push .../build/outputs/apk/app-release.apk /sdcard/demo.apk
-   4. click the "apply patch apk" button, and see the changes you made then.
-   
-### retrieve hotfix file
+## retrieve hotfix file
 
 - make it simple, you just need a fully new apk
 
 - for user's network traffic's sake, you may just want to download a diff file
   [bspatch](https://github.com/eleme/bspatch) is an option for you
+  
+
+## Inspired by
+
+[Android Patch 方案与持续交付](http://dev.qq.com/topic/57a31921ac3a1fb613dd40f3)
+
+[DroidPlugin](https://github.com/DroidPluginTeam/DroidPlugin)
 
 
 license
