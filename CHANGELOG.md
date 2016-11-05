@@ -1,3 +1,20 @@
+## Version [0.5.0](https://github.com/eleme/Amigo/releases/tag/v0.5.0)
+_2016-11-03
+* support Amigo hotfix itself :v:
+* support **ContentProvider** :+1:
+* **metaData** retrieved from patch.apk is support :+1:
+* support app LauncherActivity' name change
+* refactor **RCompact**
+* fix Activity's **label** or **theme** not found
+
+## Version [0.4.4](https://github.com/eleme/Amigo/releases/tag/v0.4.4)
+_2016-10-19
+* fix delete directory bug
+
+## Version [0.4.3](https://github.com/eleme/Amigo/releases/tag/v0.4.3)
+_2016-10-17_
+* optimize app init time
+
 ## Version [0.4.2](https://github.com/eleme/Amigo/releases/tag/v0.4.2)
 _2016-10-15_
 * fix load receiver error

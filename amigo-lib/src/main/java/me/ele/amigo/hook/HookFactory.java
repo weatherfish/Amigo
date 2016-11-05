@@ -15,8 +15,8 @@ public class HookFactory {
 
     public static void install(Context context, ClassLoader cl) {
         installHook(new IActivityManagerHook(context), cl);
+        installHook(new IPackageManagerHook(context), cl);
     }
-
 
     private static void installHook(Hook hook, ClassLoader cl) {
         try {
@@ -26,6 +26,21 @@ public class HookFactory {
             }
         } catch (Throwable throwable) {
             Log.e(TAG, "installHook %s error", throwable, hook);
+        }
+    }
+
+    public static void uninstallAllHooks(ClassLoader cl){
+        if(cl == null) {
+            Log.e(TAG, "uninstallAllHooks: null classloader");
+            return;
+        }
+
+        for (Hook hook : mHookList) {
+            try {
+                hook.onUnInstall(cl);
+            } catch (Throwable throwable) {
+                throw  new RuntimeException(throwable);
+            }
         }
     }
 

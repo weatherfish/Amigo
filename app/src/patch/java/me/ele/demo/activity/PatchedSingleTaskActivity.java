@@ -1,15 +1,15 @@
-package me.ele.app.amigo.activity;
+package me.ele.demo.activity;
 
 import android.content.Intent;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
-import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 
-public class PatchedSingleTaskActivity2 extends AppCompatActivity {
+import me.ele.app.amigo.BaseActivity;
 
-    public static final String TAG = PatchedSingleTaskActivity2.class.getSimpleName();
+public class PatchedSingleTaskActivity extends BaseActivity {
 
+    public static final String TAG = PatchedSingleTaskActivity.class.getSimpleName();
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {

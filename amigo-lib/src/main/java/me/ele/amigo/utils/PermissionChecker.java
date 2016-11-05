@@ -2,6 +2,7 @@ package me.ele.amigo.utils;
 
 
 import android.content.Context;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.text.TextUtils;
 
@@ -11,6 +12,8 @@ import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 
+import me.ele.amigo.exceptions.IllegalPatchApkException;
+
 public class PermissionChecker {
 
     private static final String TAG = PermissionChecker.class.getSimpleName();
@@ -19,8 +22,15 @@ public class PermissionChecker {
         try {
             List<String> extraPermissions = new ArrayList<>();
             PackageManager pm = context.getPackageManager();
-            String[] hostPs = pm.getPackageInfo(context.getPackageName(), PackageManager.GET_PERMISSIONS).requestedPermissions;
-            String[] patchPs = pm.getPackageArchiveInfo(patchApk.getAbsolutePath(), PackageManager.GET_PERMISSIONS).requestedPermissions;
+            String[] hostPs = pm.getPackageInfo(context.getPackageName(), PackageManager
+                    .GET_PERMISSIONS).requestedPermissions;
+            PackageInfo packageInfo = pm.getPackageArchiveInfo(patchApk.getAbsolutePath(),
+                    PackageManager.GET_PERMISSIONS);
+            if (packageInfo == null) {
+                throw new IllegalPatchApkException();
+            }
+
+            String[] patchPs = packageInfo.requestedPermissions;
 
             if (patchPs == null) {
                 return true;

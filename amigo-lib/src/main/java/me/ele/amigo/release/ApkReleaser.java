@@ -26,23 +26,50 @@ import static me.ele.amigo.Amigo.SP_NAME;
 import static me.ele.amigo.utils.CrcUtils.getCrc;
 
 public class ApkReleaser {
-    private static final String TAG = ApkReleaser.class.getSimpleName();
-
-    private static final int SLEEP_DURATION = 200;
-
     static final int WHAT_DEX_OPT_DONE = 1;
     static final int WHAT_FINISH = 2;
-
     static final int DELAY_FINISH_TIME = 4000;
-
-    private Context context;
-    private ExecutorService service;
-
+    private static final String TAG = ApkReleaser.class.getSimpleName();
+    private static final int SLEEP_DURATION = 200;
+    private static final String DEX_SUFFIX = ".dex";
     private static boolean isReleasing = false;
     private static ApkReleaser releaser;
-
+    private Context context;
+    private ExecutorService service;
     private AmigoDirs amigoDirs;
     private PatchApks patchApks;
+    private Handler handler = new Handler() {
+        @Override
+        public void handleMessage(Message msg) {
+            super.handleMessage(msg);
+            switch (msg.what) {
+                case WHAT_DEX_OPT_DONE:
+                    isReleasing = false;
+                    String checksum = (String) msg.obj;
+                    doneDexOpt(checksum);
+                    saveDexAndSoChecksum(checksum);
+                    context.getSharedPreferences(SP_NAME, Context.MODE_MULTI_PROCESS)
+                            .edit()
+                            .putString(Amigo.WORKING_PATCH_APK_CHECKSUM, checksum)
+                            .commit();
+                    handler.sendEmptyMessageDelayed(WHAT_FINISH, DELAY_FINISH_TIME);
+                    break;
+                case WHAT_FINISH:
+                    System.exit(0);
+                    Process.killProcess(Process.myPid());
+                    break;
+                default:
+                    break;
+            }
+        }
+    };
+
+    private ApkReleaser(Context context) {
+        this.context = context;
+        this.service = Executors.newFixedThreadPool(3);
+        this.amigoDirs = AmigoDirs.getInstance(context);
+        this.patchApks = PatchApks.getInstance(context);
+    }
 
     public static ApkReleaser getInstance(Context context) {
         if (releaser == null) {
@@ -55,13 +82,6 @@ public class ApkReleaser {
         return releaser;
     }
 
-    private ApkReleaser(Context context) {
-        this.context = context;
-        this.service = Executors.newFixedThreadPool(3);
-        this.amigoDirs = AmigoDirs.getInstance(context);
-        this.patchApks = PatchApks.getInstance(context);
-    }
-
     public void release(final String checksum) {
         if (isReleasing) {
             return;
@@ -72,12 +92,12 @@ public class ApkReleaser {
             public void run() {
                 isReleasing = true;
                 DexReleaser.releaseDexes(patchApks.patchFile(checksum), amigoDirs.dexDir(checksum));
-                NativeLibraryHelperCompat.copyNativeBinaries(patchApks.patchFile(checksum), amigoDirs.libDir(checksum));
+                NativeLibraryHelperCompat.copyNativeBinaries(patchApks.patchFile(checksum),
+                        amigoDirs.libDir(checksum));
                 dexOptimization(checksum);
             }
         });
     }
-
 
     private void dexOptimization(final String checksum) {
         Log.e(TAG, "dexOptimization");
@@ -110,7 +130,8 @@ public class ApkReleaser {
                             }
                         }
                     }
-                    Log.e(TAG, String.format("dex %s consume %d ms", dex.getAbsolutePath(), System.currentTimeMillis() - startTime));
+                    Log.e(TAG, String.format("dex %s consume %d ms", dex.getAbsolutePath(),
+                            System.currentTimeMillis() - startTime));
                     countDownLatch.countDown();
                 }
             });
@@ -124,8 +145,6 @@ public class ApkReleaser {
         Log.e(TAG, "dex opt done");
         handler.sendMessage(handler.obtainMessage(WHAT_DEX_OPT_DONE, checksum));
     }
-
-    private static final String DEX_SUFFIX = ".dex";
 
     private String optimizedPathFor(File path, File optimizedDirectory) {
         String fileName = path.getName();
@@ -143,32 +162,6 @@ public class ApkReleaser {
         File result = new File(optimizedDirectory, fileName);
         return result.getPath();
     }
-
-    private Handler handler = new Handler() {
-        @Override
-        public void handleMessage(Message msg) {
-            super.handleMessage(msg);
-            switch (msg.what) {
-                case WHAT_DEX_OPT_DONE:
-                    isReleasing = false;
-                    String checksum = (String) msg.obj;
-                    doneDexOpt(checksum);
-                    saveDexAndSoChecksum(checksum);
-                    context.getSharedPreferences(SP_NAME, Context.MODE_MULTI_PROCESS)
-                            .edit()
-                            .putString(Amigo.WORKING_PATCH_APK_CHECKSUM, checksum)
-                            .commit();
-                    handler.sendEmptyMessageDelayed(WHAT_FINISH, DELAY_FINISH_TIME);
-                    break;
-                case WHAT_FINISH:
-                    System.exit(0);
-                    Process.killProcess(Process.myPid());
-                    break;
-                default:
-                    break;
-            }
-        }
-    };
 
     private void saveDexAndSoChecksum(String apkChecksum) {
         SharedPreferences sp = context.getSharedPreferences(SP_NAME, Context.MODE_MULTI_PROCESS);
