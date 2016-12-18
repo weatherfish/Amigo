@@ -1,6 +1,5 @@
 apply plugin: 'com.android.application'
 apply plugin: 'me.ele.amigo'
-apply plugin: 'com.neenbedankt.android-apt'
 
 android {
     compileSdkVersion 23
@@ -8,7 +7,7 @@ android {
 
     defaultConfig {
         applicationId "me.ele.app.amigo"
-        minSdkVersion 14
+        minSdkVersion 7
         targetSdkVersion 22
         versionCode 11
         versionName "1.0"
@@ -26,14 +25,14 @@ android {
         release {
             debuggable true
             signingConfig signingConfigs.debug
-            minifyEnabled true
+            minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
 
         host {
             debuggable true
             signingConfig signingConfigs.debug
-            minifyEnabled true
+            minifyEnabled false
             zipAlignEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -41,10 +40,34 @@ android {
         patch {
             debuggable true
             signingConfig signingConfigs.debug
-            minifyEnabled true
+            minifyEnabled false
             zipAlignEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+    }
+
+    // test split apk
+    splits {
+
+        // Configures screen ABI split settings
+        abi {
+
+            // Enable ABI APK splits
+            enable false
+
+            // By default all ABIs are included, so use reset() and include to specify that we only
+            // want APKs for x86, armeabi-v7a, and mips
+
+            // Resets the list of ABIs that Gradle should create APKs for to none
+            reset()
+
+            // Specifies a list of ABIs that Gradle should create APKs for
+            include "armeabi", "x86"
+        }
+    }
+
+    lintOptions {
+        ignoreWarnings true
     }
 }
 
@@ -54,13 +77,13 @@ dependencies {
     compile 'com.android.support:design:23.4.0'
     compile 'com.android.support:multidex:1.0.1'
 
-    compile "com.jakewharton:butterknife:8.3.0"
-
 //    // test multidex
 //    compile group: 'com.google.guava', name: 'guava', version: '19.0'
 //    compile "org.scala-lang:scala-library:2.11.7"
+}
 
-    apt "com.jakewharton:butterknife-compiler:8.3.0"
+amigo {
+    disable false
 }
 
 
@@ -111,7 +134,7 @@ def deletePatchApk() {
 task runHost(dependsOn: assembleHost) << {
     deletePatchApk()
     runCmd("adb uninstall ${getPkg()}")
-    runCmd("adb install -r -d ${getHostApk()}")
+    runCmd("adb install -r ${getHostApk()}")
     launch()
 }
 

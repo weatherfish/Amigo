@@ -1,14 +1,13 @@
 
-Amigo
-
 [wiki](https://github.com/eleme/Amigo/wiki)
 
 [changelog](https://github.com/eleme/Amigo/blob/master/CHANGELOG.md)
 
+[Amigo平台](https://amigo.ele.me) (Amigo后端管理服务上线啦 :v:)
+
 ![amigo.png](http://amigotheband.com/wp-content/uploads/2015/02/logo_amigo-yellow.png)  
 
-   一个Android 平台的hotfix 库, 支持热更新。
-
+   一个Android 平台的hotfix 库, 支持热更新，支持热修复
 
 ## 用法
 
@@ -22,7 +21,7 @@ buildscript {
     }
     
     dependencies {
-        classpath 'me.ele:amigo:0.5.0'
+        classpath 'me.ele:amigo:0.6.2'
     }
 }
 ```
@@ -35,11 +34,25 @@ apply plugin: 'me.ele.amigo'
 android {
  ...
 }
+
+//开发过程中你可以不想开启Amigo，可以把这个值设置为true
+//你可以把这个定义在mybuild.gradle，以区分debug & release打包
+amigo {
+    disable false //默认 false
+}
+
 ```
 
    就这样轻松的集成了Amigo。
    
-### 自定义loading界面
+### 兼容性
+
+- 支持所有设备，从 ECLAIR `2.1` to Nougat `7.1`
+- 甚至可以支持下个Android release的版本, 不管改动是否很大。 很酷，有木有 :v:
+- 不支持Android 3.0
+
+   
+### 自定义loading界面（可选）
 
 在热修复的过程中会进行一些耗时(dex优化)的操作，这些操作会在一个新的进程中的Activity 中执行，所以你可以在Manifest文件中增加下面的两个配置来自定义这个Activity，美化loading界面。
 
@@ -51,7 +64,16 @@ android {
 <meta-data
    android:name="amigo_theme"
    android:value="{your-theme-name}" />
+   
+<meta-data
+    android:name="amigo_orientation"
+    android:value="{your-custom-orientation}"/>
 ```
+
+**提示**: 
+
+- 这三个`meta-data`信息请写在你自己的app module下的`AndroidManifest.xml`
+- orientation value值必须在[screenOrientation](https://developer.android.com/guide/topics/manifest/activity-element.html#screen)之内
 
 ### 运行patch apk
    补丁包生效方式有两种可以选择：
@@ -61,7 +83,7 @@ android {
      如果不想立即生效而是用户第二次打开App 时才打入补丁包，可以通过这个方法：
      
     ```java
-    Amigo.workLater(context, apkFile);
+    Amigo.workLater(context, apkFile, callback);
     ```
     
 *    立即生效
@@ -121,6 +143,10 @@ Gradle插件会自动选择正确的库版本,在开发过程中,我们会使用
         ```
         
 - 不支持和Instant Run同时使用
+
+-  Amigo 不支持 Honeycomb `3.0`
+    * Android 3.0 是一个满是bug的版本, & 并且Google已经关闭这个版本.
+    
 - `notification` & `widget`中`RemoteViews`的自定义布局不支持修改,只支持内容修复
 
    任何使用在`RemoteViews`里面的资源id都需要进行这样的包装 ```java RCompat.getHostIdentifier(Context context, int id) ```
@@ -132,7 +158,7 @@ Gradle插件会自动选择正确的库版本,在开发过程中,我们会使用
 - 简单来说, 你只需要下载一个全新的apk
 
 - 为用户的流量着想, 你可能只想下载一个差分文件
-   [bspatch](https://github.com/eleme/bspatch)可能是你的一个选择
+   [bspatch](https://github.com/eleme/bspatch)(可针对Apk差分，或者基于Apk内容更细力度的差分)可能是你的一个选择
 
 ## Inspired by
 

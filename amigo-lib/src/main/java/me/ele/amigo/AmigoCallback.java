@@ -29,7 +29,6 @@ public class AmigoCallback implements Handler.Callback {
 
     @Override
     public boolean handleMessage(Message msg) {
-
         if (msg.what == LAUNCH_ACTIVITY) {
             return handleLaunchActivity(msg);
         }
@@ -41,6 +40,7 @@ public class AmigoCallback implements Handler.Callback {
 
     private boolean handleLaunchActivity(Message msg) {
         try {
+            Amigo.rollAmigoBack(context);
             ClassLoader classLoader = context.getClassLoader();
             Intent intent = (Intent) FieldUtils.readField(msg.obj, "intent");
             intent.setExtrasClassLoader(classLoader);

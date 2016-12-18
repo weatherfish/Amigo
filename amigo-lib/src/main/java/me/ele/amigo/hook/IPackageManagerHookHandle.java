@@ -2,14 +2,19 @@ package me.ele.amigo.hook;
 
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.util.Log;
 
+import java.io.File;
 import java.lang.reflect.Method;
 
 import me.ele.amigo.Amigo;
 import me.ele.amigo.PatchApks;
+import me.ele.amigo.utils.CommonUtils;
+
+import static me.ele.amigo.Amigo.getWorkingPatchApkChecksum;
 
 public class IPackageManagerHookHandle extends BaseHookHandle {
 
@@ -23,7 +28,8 @@ public class IPackageManagerHookHandle extends BaseHookHandle {
 
     @Override
     protected void init() {
-        sHookedMethodHandlers.put("getApplicationInfo", new getApplicationInfo(context));
+        hookedMethodHandlers.put("getApplicationInfo", new getApplicationInfo(context));
+        hookedMethodHandlers.put("getPackageInfo", new getPackageInfo(context));
     }
 
     private static class getApplicationInfo extends HookedMethodHandler {
@@ -54,6 +60,10 @@ public class IPackageManagerHookHandle extends BaseHookHandle {
                             metaData = context.getPackageManager().getPackageArchiveInfo
                                     (workingPatchApk, PackageManager.GET_META_DATA)
                                     .applicationInfo.metaData;
+                            if (metaData == null) {
+                                metaData = CommonUtils.getPackageArchiveInfo(workingPatchApk,
+                                        PackageManager.GET_META_DATA).applicationInfo.metaData;
+                            }
                         }
                         ((ApplicationInfo) invokeResult).metaData = metaData;
                     } catch (Exception e) {
@@ -64,6 +74,37 @@ public class IPackageManagerHookHandle extends BaseHookHandle {
                 }
             }
             super.afterInvoke(receiver, method, args, invokeResult);
+        }
+    }
+
+    private class getPackageInfo extends HookedMethodHandler {
+        private int patchVersionCode = 0;
+        private String patchVersionName = "0.0.0";
+
+        public getPackageInfo(Context context) {
+            super(context);
+        }
+
+        @Override
+        protected void afterInvoke(Object receiver, Method method, Object[] args, Object
+                invokeResult) throws Throwable {
+            super.afterInvoke(receiver, method, args, invokeResult);
+            PackageInfo result = (PackageInfo) invokeResult;
+
+            if (!context.getPackageName().equals(result.packageName)) {
+                return;
+            }
+
+            if ("0.0.0".equals(patchVersionName)) {
+                String checksum = getWorkingPatchApkChecksum(context);
+                File patchFile = PatchApks.getInstance(context).patchFile(checksum);
+                PackageInfo workingPatchInfo = CommonUtils.getPackageInfo(context, patchFile, 0);
+                patchVersionCode = workingPatchInfo.versionCode;
+                patchVersionName = workingPatchInfo.versionName;
+            }
+
+            result.versionCode = patchVersionCode;
+            result.versionName = patchVersionName;
         }
     }
 }

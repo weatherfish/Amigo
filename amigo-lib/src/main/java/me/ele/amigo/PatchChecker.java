@@ -1,19 +1,19 @@
 package me.ele.amigo;
 
 import android.content.Context;
-import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.Signature;
+import android.text.TextUtils;
 import android.util.Log;
 
 import java.io.File;
+import java.util.Map;
 
+import me.ele.amigo.utils.ArrayUtil;
 import me.ele.amigo.utils.CommonUtils;
 import me.ele.amigo.utils.CrcUtils;
 import me.ele.amigo.utils.PermissionChecker;
 
-import static android.content.Context.MODE_MULTI_PROCESS;
-import static me.ele.amigo.Amigo.SP_NAME;
-import static me.ele.amigo.Amigo.VERSION_CODE;
 import static me.ele.amigo.utils.CrcUtils.getCrc;
 import static me.ele.amigo.utils.FileUtils.copyFile;
 
@@ -21,20 +21,8 @@ class PatchChecker {
 
     private static final String TAG = PatchChecker.class.getName();
 
-    static boolean checkUpgrade(Context context) {
-        boolean result = false;
-        SharedPreferences sharedPref = context.getSharedPreferences(SP_NAME, MODE_MULTI_PROCESS);
-        int recordVersion = sharedPref.getInt(VERSION_CODE, 0);
-        int currentVersion = CommonUtils.getVersionCode(context);
-        if (currentVersion > recordVersion) {
-            result = true;
-        }
-        sharedPref.edit().putInt(VERSION_CODE, currentVersion).commit();
-        return result;
-    }
-
-    static String checkPatchAndCopy(Context context, File patchFile) {
-        PatchChecker.checkPatchApk(context, patchFile);
+    static String checkPatchAndCopy(Context context, File patchFile, boolean checkSignature) {
+        PatchChecker.checkPatchApk(context, patchFile, checkSignature);
         String patchChecksum = CrcUtils.getCrc(patchFile);
         if (!PatchApks.getInstance(context).exists(patchChecksum)) {
             copyFile(patchFile, PatchApks.getInstance(context).patchFile(patchChecksum));
@@ -42,7 +30,7 @@ class PatchChecker {
         return patchChecksum;
     }
 
-    private static void checkPatchApk(Context context, File patchFile) {
+    private static void checkPatchApk(Context context, File patchFile, boolean checkSignature) {
         if (patchFile == null) {
             throw new NullPointerException("param apkFile cannot be null");
         }
@@ -59,7 +47,7 @@ class PatchChecker {
             throw new IllegalStateException("patch apk cannot request more permissions than host");
         }
 
-        if (!checkSignature(context, patchFile)) {
+        if (checkSignature && !checkSignature(context, patchFile)) {
             throw new IllegalStateException("patch apk's signature is different with host");
         }
     }
@@ -76,42 +64,44 @@ class PatchChecker {
     }
 
     static void checkDexAndSo(Context context, String apkChecksum) throws Exception {
-        SharedPreferences sp = context.getSharedPreferences(SP_NAME, MODE_MULTI_PROCESS);
+        Map<String, String> checksumMap = PatchInfoUtil.getPatchFileChecksum(context, apkChecksum);
         AmigoDirs amigoDirs = AmigoDirs.getInstance(context);
-        File[] dexFiles = amigoDirs.dexDir(apkChecksum).listFiles();
 
-        for (File dexFile : dexFiles) {
-            String savedChecksum = sp.getString(dexFile.getAbsolutePath(), "");
-            String checksum = getCrc(dexFile);
-            Log.e(TAG, "dexFile-->" + dexFile);
-            Log.e(TAG, "savedChecksum-->" + savedChecksum + ", checksum--->" + checksum);
-            if (!savedChecksum.equals(checksum)) {
-                throw new IllegalStateException("wrong dex check sum");
-            }
-        }
+        File[] dexFiles = amigoDirs.dexDir(apkChecksum).listFiles();
+        assertChecksum(checksumMap, dexFiles, "dex");
 
         File[] dexOptFiles = amigoDirs.dexOptDir(apkChecksum).listFiles();
-        for (File dexOptFile : dexOptFiles) {
-            String savedChecksum = sp.getString(dexOptFile.getAbsolutePath(), "");
-            String checksum = getCrc(dexOptFile);
-            Log.e(TAG, "opt dexFile-->" + dexOptFile);
-            Log.e(TAG, "savedChecksum-->" + savedChecksum + ", checksum--->" + checksum);
-            if (!savedChecksum.equals(checksum)) {
-                throw new IllegalStateException("wrong opt dex check sum");
-            }
-        }
+        assertChecksum(checksumMap, dexOptFiles, "opt dex");
 
         File[] nativeFiles = amigoDirs.libDir(apkChecksum).listFiles();
-        if (nativeFiles != null && nativeFiles.length > 0) {
-            for (File nativeFile : nativeFiles) {
-                String savedChecksum = sp.getString(nativeFile.getAbsolutePath(), "");
-                String checksum = getCrc(nativeFile);
-                Log.e(TAG, "native lib -->" + nativeFile);
-                Log.e(TAG, "savedChecksum-->" + savedChecksum + ", checksum--->" + checksum);
-                if (!savedChecksum.equals(checksum)) {
-                    throw new IllegalStateException("wrong native lib check sum");
-                }
+        assertChecksum(checksumMap, nativeFiles, "native lib");
+    }
+
+    private static void assertChecksum(Map<String, String> checksumMap, File[] files,
+                                       String type) {
+        if (ArrayUtil.isEmpty(files)) {
+            return;
+        }
+
+        for (File nativeFile : files) {
+            String savedChecksum = checksumMap.get(nativeFile.getAbsolutePath());
+            String checksum = getCrc(nativeFile);
+            Log.e(TAG, "savedChecksum-->" + savedChecksum + ", checksum--->" + checksum);
+            if (!checksum.equals(savedChecksum)) {
+                throw new IllegalStateException("wrong " + type + "  check sum");
             }
         }
+    }
+
+    static boolean checkUpgrade(Context context) {
+        String workingChecksum = PatchInfoUtil.getWorkingChecksum(context);
+        if (TextUtils.isEmpty(workingChecksum)) {
+            return true;
+        }
+        String patchPath = PatchApks.getInstance(context).patchPath(workingChecksum);
+        PackageInfo patchInfo = context.getPackageManager().getPackageArchiveInfo(patchPath, 0);
+        int patchVersion = patchInfo.versionCode;
+        int hostVersion = CommonUtils.getVersionCode(context);
+        return hostVersion > patchVersion;
     }
 }

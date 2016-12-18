@@ -7,55 +7,56 @@ import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.os.Build;
-import android.util.Log;
 
-import java.io.File;
-import java.util.Arrays;
 import java.util.List;
-
-import me.ele.amigo.Amigo;
-import me.ele.amigo.AmigoDirs;
-import me.ele.amigo.PatchApks;
-import me.ele.amigo.reflect.FieldUtils;
-import me.ele.amigo.utils.ArrayUtil;
-import me.ele.amigo.utils.FileUtils;
 
 public class ActivityFinder extends ComponentFinder {
 
-    private static ActivityInfo[] activityInfosCache;
     private static ComponentName newLauncherComponent;
+    private static ActivityInfo[] sHostActivities;
 
     public static ActivityInfo[] getAppActivities(Context context) {
+        if (sHostActivities != null) {
+            return sHostActivities;
+        }
+
         try {
             PackageManager pm = context.getPackageManager();
+            /*
+             * Notice :
+             * will not return the activity-info of a component which is declared disabled in
+             * manifest and has never been set to enabled state dynamically.
+            */
             PackageInfo info =
-                    pm.getPackageInfo(context.getPackageName(), PackageManager.GET_ACTIVITIES);
-            return info.activities;
+                    pm.getPackageInfo(context.getPackageName(), PackageManager.GET_ACTIVITIES |
+                            PackageManager.GET_META_DATA);
+            return sHostActivities = info.activities;
         } catch (PackageManager.NameNotFoundException e) {
             e.printStackTrace();
         }
         return null;
     }
 
-    public static ActivityInfo[] getNewAppActivities(Context context) {
-        PackageManager pm = context.getPackageManager();
-        if (!isHotfixApkValid(context)) {
-            return null;
+    public static boolean newActivityExistsInPatch(Context context) {
+        parsePackage(context);
+        getAppActivities(context);
+        for (int i = sActivities.size() - 1; i >= 0; i--) {
+            ActivityInfo patchActivityInfo = sActivities.get(i).activityInfo;
+            if (isNew(patchActivityInfo)) {
+                return true;
+            }
         }
+        return false;
+    }
 
-        if (activityInfosCache == null) {
-            File file = getHotFixApk(context);
-            PackageInfo info =
-                    pm.getPackageArchiveInfo(file.getAbsolutePath(), PackageManager.GET_ACTIVITIES);
-            String checkSum = PatchApks.getInstance(context).patchPath(Amigo
-                    .getWorkingPatchApkChecksum(context));
-            info.applicationInfo.sourceDir = checkSum;
-            info.applicationInfo.publicSourceDir = checkSum;
-            info.applicationInfo.uid = context.getApplicationInfo().uid;
-            activityInfosCache = info.activities;
+    private static boolean isNew(ActivityInfo patchActivityInfo) {
+        // check any changes in activity's metadata ?
+        for (int i1 = sHostActivities.length - 1; i1 >= 0; i1--) {
+            if (sHostActivities[i1].name.equals(patchActivityInfo.name)) {
+                return false;
+            }
         }
-        return activityInfosCache;
+        return true;
     }
 
     public static ComponentName getNewLauncherComponent(Context context) {
@@ -63,25 +64,30 @@ public class ActivityFinder extends ComponentFinder {
             return newLauncherComponent;
         }
 
-        // see PackageParser.Activity
-        for (Object activity : activities) {
-            try {
-                List<IntentFilter> intents =
-                        (List<IntentFilter>) FieldUtils.readField(activity, "intents");
-                for (IntentFilter intentFilter : intents) {
-                    if (intentFilter.hasAction(Intent.ACTION_MAIN)
-                            && intentFilter.hasCategory(Intent.CATEGORY_LAUNCHER)) {
-                        ActivityInfo info = (ActivityInfo) FieldUtils.readField(activity, "info");
-                        newLauncherComponent = new ComponentName(context.getPackageName(),
-                                info.targetActivity != null ? info.targetActivity : info.name);
-                        return newLauncherComponent;
-                    }
-                }
-            } catch (IllegalAccessException e) {
-                e.printStackTrace();
+        parsePackage(context);
+        for (Activity activity : sActivities) {
+            if (isNewLauncherActivity(activity)) {
+                ActivityInfo info = activity.activityInfo;
+                return newLauncherComponent = new ComponentName(context.getPackageName(),
+                        info.targetActivity != null ? info.targetActivity : info.name);
             }
         }
         return newLauncherComponent;
+    }
+
+    private static boolean isNewLauncherActivity(Activity activity) {
+        List<IntentFilter> intents = activity.filters;
+        if (intents == null || intents.isEmpty()) {
+            return false;
+        }
+
+        for (IntentFilter intentFilter : intents) {
+            if (intentFilter.hasAction(Intent.ACTION_MAIN)
+                    && intentFilter.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static ComponentName getLauncherComponent(Context context) {
@@ -96,16 +102,15 @@ public class ActivityFinder extends ComponentFinder {
     }
 
     public static ActivityInfo getActivityInfoInNewApp(Context context, String activityClassName) {
-        ActivityInfo[] infos = getNewAppActivities(context);
-        if (ArrayUtil.isEmpty(infos)) {
+        parsePackage(context);
+        if (sActivities.isEmpty()) {
             return null;
         }
 
-        for (ActivityInfo info : infos) {
-            if (info.name.equals(activityClassName)) {
-                Log.d("ActivityFinder", "getActivityInfoInNewApp: " + info.applicationInfo
-                        .sourceDir);
-                return info;
+        for (Activity activity : sActivities) {
+            ActivityInfo activityInfo = activity.activityInfo;
+            if (activityInfo.name.equals(activityClassName)) {
+                return activityInfo;
             }
         }
         return null;

@@ -3,24 +3,24 @@ package me.ele.amigo;
 import android.app.Application;
 import android.app.Instrumentation;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.PackageManager;
+import android.content.pm.PackageInfo;
 import android.os.Handler;
-import android.os.Process;
 import android.text.TextUtils;
 import android.util.Log;
 
 import java.io.File;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 import java.util.Map;
 
 import me.ele.amigo.exceptions.LoadPatchApkException;
 import me.ele.amigo.hook.HookFactory;
 import me.ele.amigo.reflect.FieldUtils;
-import me.ele.amigo.release.ApkReleaser;
+import me.ele.amigo.release.ApkReleaseActivity;
 import me.ele.amigo.utils.CommonUtils;
 import me.ele.amigo.utils.ProcessUtils;
+import me.ele.amigo.utils.component.ActivityFinder;
 import me.ele.amigo.utils.component.ContentProviderFinder;
 import me.ele.amigo.utils.component.ReceiverFinder;
 
@@ -34,13 +34,8 @@ import static me.ele.amigo.reflect.MethodUtils.invokeMethod;
 public class Amigo extends Application {
     private static final String TAG = Amigo.class.getSimpleName();
 
-    public static final String SP_NAME = "Amigo";
-    public static final String WORKING_PATCH_APK_CHECKSUM = "working_patch_apk_checksum";
-    public static final String VERSION_CODE = "version_code";
-
     private static LoadPatchError loadPatchError;
 
-    private SharedPreferences sharedPref;
 
     private Instrumentation originalInstrumentation = null;
     private Object originalCallback = null;
@@ -54,17 +49,19 @@ public class Amigo extends Application {
         super.onCreate();
         try {
             init();
-            String workingPatchApkChecksum = sharedPref.getString(WORKING_PATCH_APK_CHECKSUM, "");
-            Log.e(TAG, "working checksum: " + workingPatchApkChecksum);
-            if (PatchChecker.checkUpgrade(this)) {
-                Log.d(TAG, "Host app has upgrade");
+            String workingChecksum = PatchInfoUtil.getWorkingChecksum(this);
+            Log.e(TAG, "#onCreate working checksum: " + workingChecksum);
+
+            if (TextUtils.isEmpty(workingChecksum)
+                    || !patchApks.exists(workingChecksum)) {
+                Log.d(TAG, "#onCreate Patch apk doesn't exists");
                 PatchCleaner.clearPatchIfInMainProcess(this);
                 runOriginalApplication();
                 return;
             }
-            if (TextUtils.isEmpty(workingPatchApkChecksum)
-                    || !patchApks.exists(workingPatchApkChecksum)) {
-                Log.d(TAG, "Patch apk doesn't exists");
+
+            if (PatchChecker.checkUpgrade(this)) {
+                Log.d(TAG, "Host app has upgrade");
                 PatchCleaner.clearPatchIfInMainProcess(this);
                 runOriginalApplication();
                 return;
@@ -72,19 +69,19 @@ public class Amigo extends Application {
 
             // ensure load dex process always run host apk not patch apk
             if (ProcessUtils.isLoadDexProcess(this)) {
-                Log.e(TAG, "load dex process");
+                Log.e(TAG, "#onCreate load dex process");
                 runOriginalApplication();
                 return;
             }
 
-            if (!ProcessUtils.isMainProcess(this) && isPatchApkFirstRun(workingPatchApkChecksum)) {
-                Log.e(TAG, "None main process and patch apk is not released yet");
+            if (!ProcessUtils.isMainProcess(this) && isPatchApkFirstRun(workingChecksum)) {
+                Log.e(TAG, "#onCreate None main process and patch apk is not released yet");
                 runOriginalApplication();
                 return;
             }
 
             // only release loaded apk in the main process
-            runPatchApk(workingPatchApkChecksum);
+            runPatchApk(workingChecksum);
         } catch (LoadPatchApkException e) {
             e.printStackTrace();
             loadPatchError = LoadPatchError.record(LoadPatchError.LOAD_ERR, e);
@@ -102,7 +99,6 @@ public class Amigo extends Application {
      * WARNING: do not modify this method's name, used for hotfix itself
      */
     private void init() {
-        sharedPref = getSharedPreferences(SP_NAME, MODE_MULTI_PROCESS);
         amigoDirs = AmigoDirs.getInstance(this);
         patchApks = PatchApks.getInstance(this);
     }
@@ -110,8 +106,7 @@ public class Amigo extends Application {
     private void runPatchApk(String checksum) throws LoadPatchApkException {
         try {
             if (isPatchApkFirstRun(checksum) || !isOptedDexExists(checksum)) {
-                // TODO This is workaround for now, refactor in future.
-                sharedPref.edit().remove(checksum).commit();
+                PatchInfoUtil.updateDexFileOptStatus(this, checksum, false);
                 releasePatchApk(checksum);
             } else {
                 PatchChecker.checkDexAndSo(this, checksum);
@@ -154,10 +149,17 @@ public class Amigo extends Application {
         setAPKClassLoader(classLoader);
         revertBitFlag |= 1;
         setApkResource(checksum);
-        setApkInstrumentation();
-        revertBitFlag |= 1 << 1;
-        setApkHandlerCallback();
-        revertBitFlag |= 1 << 2;
+
+        boolean gotNewActivity = ActivityFinder.newActivityExistsInPatch(this);
+        if (gotNewActivity) {
+            setApkInstrumentation();
+            revertBitFlag |= 1 << 1;
+            setApkHandlerCallback();
+            revertBitFlag |= 1 << 2;
+        } else {
+            Log.d(TAG, "installAndHook: there is no any new activity, skip hooking " +
+                    "instrumentation & mH's callback");
+        }
 
         installHookFactory();
 
@@ -166,9 +168,8 @@ public class Amigo extends Application {
         dynamicRegisterNewReceivers();
         installPatchContentProviders();
 
-        sharedPref.edit().putString(WORKING_PATCH_APK_CHECKSUM, checksum).commit();
+        PatchInfoUtil.setWorkingChecksum(this, checksum); // not necessary
         PatchCleaner.clearOldPatches(this, checksum);
-
     }
 
     private void setApkResource(String checksum) throws Exception {
@@ -193,17 +194,25 @@ public class Amigo extends Application {
     }
 
     private void setApkHandlerCallback() throws Exception {
+        originalCallback = replaceHandlerCallback(this);
+        Log.i(TAG, "hook handler success");
+    }
+
+    private static Handler.Callback replaceHandlerCallback(Context context) throws Exception {
         Handler handler = (Handler) readField(instance(), "mH", true);
         Object callback = readField(handler, "mCallback", true);
-        AmigoCallback value = new AmigoCallback(this, (Handler.Callback) callback);
+        if (callback != null && callback.getClass().getName().equals(AmigoCallback.class.getName
+                ())) {
+            return null;
+        }
+        AmigoCallback value = new AmigoCallback(context, (Handler.Callback) callback);
         writeField(handler, "mCallback", value);
-        originalCallback = callback;
-        Log.i(TAG, "hook handler success");
+        return value;
     }
 
     private void dynamicRegisterNewReceivers() {
         ReceiverFinder.registerNewReceivers(getApplicationContext(), getClassLoader());
-        Log.i(TAG, "dynamic register new receivers success");
+        Log.i(TAG, "dynamic register new receivers done");
     }
 
     private void installHookFactory() {
@@ -213,9 +222,8 @@ public class Amigo extends Application {
 
     private void installPatchContentProviders() {
         ContentProviderFinder.installPatchContentProviders(getApplicationContext());
-        Log.i(TAG, "installPatchContentProviders success");
+        Log.i(TAG, "installPatchContentProviders done");
     }
-
 
     private void rollbackApkHandlerCallback() {
         try {
@@ -232,27 +240,58 @@ public class Amigo extends Application {
         //start a new process to handle time-tense operation
         ApplicationInfo appInfo =
                 getPackageManager().getApplicationInfo(getPackageName(), GET_META_DATA);
-        String layoutName = appInfo.metaData.getString("amigo_layout");
-        String themeName = appInfo.metaData.getString("amigo_theme");
+        String layoutName = null;
+        String themeName = null;
+        if (appInfo.metaData != null) {
+            layoutName = appInfo.metaData.getString("amigo_layout");
+            themeName = appInfo.metaData.getString("amigo_theme");
+        }
         int layoutId = 0;
         int themeId = 0;
         if (!TextUtils.isEmpty(layoutName)) {
-            layoutId = (int) readStaticField(Class.forName(getPackageName()
-                    + ".R$layout"), layoutName);
+            layoutId = getResources().getIdentifier(layoutName, "layout", getPackageName());
         }
         if (!TextUtils.isEmpty(themeName)) {
-            themeId = (int) readStaticField(Class.forName(getPackageName()
-                    + ".R$style"), themeName);
+            themeId = getResources().getIdentifier(themeName, "style", getPackageName());
         }
         Log.e(TAG, String.format("layoutName-->%s, themeName-->%s", layoutName, themeName));
         Log.e(TAG, String.format("layoutId-->%d, themeId-->%d", layoutId, themeId));
 
-        ApkReleaser.getInstance(this).work(checksum, layoutId, themeId);
+        releaseDex(checksum, layoutId, themeId);
         Log.e(TAG, "release apk once");
     }
 
+    private static final int SLEEP_DURATION = 200;
+
+    private boolean isDexOptDone(String checksum) {
+        return PatchInfoUtil.isDexFileOptimized(this, checksum);
+    }
+
+    /**
+     * start a new process to release and optimize dex files
+     */
+    private void waitDexOptDone(String checksum, int layoutId, int themeId) {
+        ApkReleaseActivity.launch(this, checksum, layoutId, themeId);
+        while (!isDexOptDone(checksum)) {
+            try {
+                Thread.sleep(SLEEP_DURATION);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+        ProcessUtils.startLauncherIntent(this);
+    }
+
+    private void releaseDex(String checksum, int layoutId, int themeId) {
+        if (!ProcessUtils.isLoadDexProcess(this)) {
+            if (!isDexOptDone(checksum)) {
+                waitDexOptDone(checksum, layoutId, themeId);
+            }
+        }
+    }
+
     private boolean isPatchApkFirstRun(String checksum) {
-        return !sharedPref.getString(WORKING_PATCH_APK_CHECKSUM, "").equals(checksum);
+        return !PatchInfoUtil.getWorkingChecksum(this).equals(checksum);
     }
 
     private boolean isOptedDexExists(String checksum) {
@@ -311,8 +350,8 @@ public class Amigo extends Application {
         }
         if (applicationName == null) {
             applicationName = getPackageManager().getPackageArchiveInfo(
-                    PatchApks.getInstance(this).patchPath(patchApkCheckSum),
-                    PackageManager.GET_META_DATA).applicationInfo.className;
+                    PatchApks.getInstance(this).patchPath(patchApkCheckSum), 0).applicationInfo
+                    .className;
         }
         if (applicationName == null) {
             throw new RuntimeException(
@@ -344,20 +383,57 @@ public class Amigo extends Application {
     }
 
     public static void work(Context context, File patchFile) {
-        String patchChecksum = PatchChecker.checkPatchAndCopy(context, patchFile);
-        context.getSharedPreferences(SP_NAME, MODE_MULTI_PROCESS)
-                .edit()
-                .putString(Amigo.WORKING_PATCH_APK_CHECKSUM, patchChecksum)
-                .commit();
-        AmigoService.start(context, patchChecksum, false);
-        System.exit(0);
-        Process.killProcess(Process.myPid());
+        work(context, patchFile, true);
+    }
+
+    public static void workWithoutCheckingSignature(Context context, File patchFile) {
+        work(context, patchFile, false);
+    }
+
+    private static void work(Context context, File patchFile, boolean checkSignature) {
+        String patchChecksum = PatchChecker.checkPatchAndCopy(context, patchFile, checkSignature);
+        if (checkWithWorkingPatch(context, patchChecksum)) return;
+        if (!PatchInfoUtil.setWorkingChecksum(context, patchChecksum)) return;
+        KillSelfActivity.start(context);
+    }
+
+    private static boolean checkWithWorkingPatch(Context context, String patchChecksum) {
+        if (Amigo.hasWorked() && PatchInfoUtil.getWorkingChecksum(context).equals(patchChecksum)) {
+            Log.e(TAG, "cannot apply the same patch twice");
+            return true;
+        }
+        return false;
     }
 
     public static void workLater(Context context, File patchFile) {
-        String patchChecksum = PatchChecker.checkPatchAndCopy(context, patchFile);
-        if (patchChecksum != null) {
-            AmigoService.start(context, patchChecksum, true);
+        workLater(context, patchFile, true, null);
+    }
+
+    public static void workLater(Context context, File patchFile, WorkLaterCallback callback) {
+        workLater(context, patchFile, true, callback);
+    }
+
+    public static void workLaterWithoutCheckingSignature(Context context, File patchFile) {
+        workLater(context, patchFile, false, null);
+    }
+
+    public interface WorkLaterCallback {
+        void onPatchApkReleased();
+    }
+
+    private static void workLater(Context context, File patchFile, boolean checkSignature,
+                                  WorkLaterCallback callback) {
+        String patchChecksum = PatchChecker.checkPatchAndCopy(context, patchFile, checkSignature);
+        if (checkWithWorkingPatch(context, patchChecksum)) return;
+        if (patchChecksum == null) {
+            Log.e(TAG, "workLater: empty checksum");
+            return;
+        }
+
+        if (callback != null) {
+            AmigoService.startReleaseDex(context, patchChecksum, callback);
+        } else {
+            AmigoService.startReleaseDex(context, patchChecksum);
         }
     }
 
@@ -372,26 +448,70 @@ public class Amigo extends Application {
                 && classLoader.getClass().getName().equals(AmigoClassLoader.class.getName());
     }
 
-    public static int workingPatchVersion(Context ctx) {
-        if (!hasWorked() || TextUtils.isEmpty(getWorkingPatchApkChecksum(ctx))) return -1;
-        return CommonUtils.getVersionCode(ctx,
-                PatchApks.getInstance(ctx).patchFile(getWorkingPatchApkChecksum(ctx)));
+    public static PackageInfo getHostPackageInfo(Context context, int flags) {
+        String hostApkPath = context.getApplicationInfo().sourceDir;
+        return CommonUtils.getPackageInfo(context, new File(hostApkPath), flags);
     }
 
     public static String getWorkingPatchApkChecksum(Context ctx) {
         if (!hasWorked()) return "";
-        return ctx.getSharedPreferences(SP_NAME, MODE_MULTI_PROCESS)
-                .getString(WORKING_PATCH_APK_CHECKSUM, "");
+        return PatchInfoUtil.getWorkingChecksum(ctx);
     }
 
     public static void clear(Context context) {
-        context.getSharedPreferences(SP_NAME, MODE_MULTI_PROCESS)
-                .edit()
-                .putString(WORKING_PATCH_APK_CHECKSUM, "")
-                .commit();
+        PatchInfoUtil.setWorkingChecksum(context, "");
     }
 
     public static LoadPatchError getLoadPatchError() {
         return loadPatchError;
+    }
+
+    /**
+     * this is for some extreme condition,
+     * like some safety app or malicious software replaces Amigo's hook
+     *
+     * @param context
+     * @return
+     */
+    public static boolean rollAmigoBack(Context context) {
+        return checkAndSetAmigoCallback(context) || checkAndSetAmigoClassLoader(context);
+    }
+
+    private static boolean checkAndSetAmigoCallback(Context context) {
+        try {
+            Handler handler = (Handler) readField(instance(), "mH", true);
+            Object callback = readField(handler, "mCallback", true);
+            if (callback != null) {
+                Field[] fields = callback.getClass().getDeclaredFields();
+                for (Field field : fields) {
+                    Object obj = readField(field, callback, true);
+                    if (obj == null || !obj.getClass().getName().equals(AmigoCallback.class.getName())) {
+                        continue;
+                    }
+                    writeField(field, callback, null, true);
+                }
+            }
+            return replaceHandlerCallback(context.getApplicationContext()) != null;
+        } catch (Exception e) {
+            //ignore
+        }
+        return false;
+    }
+
+    private static boolean checkAndSetAmigoClassLoader(Context context) {
+        try {
+            String classloaderName = context.getClassLoader().getClass().getName();
+            if (classloaderName.equals(AmigoClassLoader.class.getName())) {
+                return false;
+            }
+            Context app = context.getApplicationContext();
+            ClassLoader classLoader = app.getClass().getClassLoader();
+            writeField(getLoadedApk(), "mClassLoader", classLoader);
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return false;
     }
 }

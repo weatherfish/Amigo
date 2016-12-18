@@ -4,117 +4,87 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
+import android.util.Log;
 
-import java.io.File;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
-import me.ele.amigo.reflect.FieldUtils;
+import me.ele.amigo.utils.ArrayUtil;
+
 
 public class ServiceFinder extends ComponentFinder {
 
     private static final String TAG = ServiceFinder.class.getSimpleName();
-
-    private static Map<String, ServiceInfo> cache = new HashMap<>();
+    private static ServiceInfo[] sHostServices;
 
     public static ServiceInfo[] getAppServices(Context context) {
-        try {
-            PackageManager pm = context.getPackageManager();
-            PackageInfo info = pm.getPackageInfo(context.getPackageName(), PackageManager
-                    .GET_SERVICES);
-            return info.services;
-        } catch (PackageManager.NameNotFoundException e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
-
-    public static ServiceInfo[] getNewAppServices(Context context) {
-        if (!isHotfixApkValid(context)) {
-            return null;
-        }
-        File file = getHotFixApk(context);
-        PackageManager pm = context.getPackageManager();
-        String archiveFilePath = file.getAbsolutePath();
-        PackageInfo info = pm.getPackageArchiveInfo(archiveFilePath, PackageManager.GET_SERVICES);
-        return info.services;
-    }
-
-
-    public static List<ServiceInfo> getNewAddedServices(Context context) {
-        ServiceInfo[] newAddedServices = getNewAppServices(context);
-        ServiceInfo[] appServices = getAppServices(context);
-        List<ServiceInfo> addedServices = new ArrayList<>();
-        if (newAddedServices != null && newAddedServices.length > 0) {
-            for (ServiceInfo newAppService : newAddedServices) {
-                boolean isNew = true;
-                if (appServices != null && appServices.length > 0) {
-                    for (ServiceInfo appService : appServices) {
-                        if (newAppService.name.equals(appService.name)) {
-                            isNew = false;
-                            break;
-                        }
-                    }
-                }
-
-                if (isNew) {
-                    android.util.Log.e(TAG, "new Service-->" + newAppService);
-                    addedServices.add(newAppService);
-                }
-            }
-        }
-        return addedServices;
-    }
-
-    public static List<IntentFilter> getIntentFilter(Context context, ServiceInfo serviceInfo) {
-        parsePackage(context);
-
-        for (Object service : services) {
+        if (sHostServices == null) {
             try {
-                ServiceInfo info = (ServiceInfo) FieldUtils.readField(service, "info");
-                if (info.name.equals(serviceInfo.name)) {
-                    return (List<IntentFilter>) FieldUtils.readField(service, "intents");
+                PackageManager pm = context.getPackageManager();
+                PackageInfo info = pm.getPackageInfo(context.getPackageName(), PackageManager
+                        .GET_SERVICES);
+                sHostServices = info.services;
+                if (sHostServices == null) {
+                    sHostServices = new ServiceInfo[0];
                 }
-            } catch (Exception e) {
+            } catch (PackageManager.NameNotFoundException e) {
                 e.printStackTrace();
             }
         }
-        return null;
+
+        return sHostServices;
     }
 
-    public static ServiceInfo resolveServiceInfo(Context context, Intent intent) {
-        ComponentName componentName = intent.getComponent();
-
-        if (componentName != null && cache.containsKey(componentName.getClassName())) {
-            return cache.get(componentName.getClassName());
+    public static boolean newServiceExistsInPatch(Context context) {
+        parsePackage(context);
+        getAppServices(context);
+        for (int i = sServices.size() - 1; i >= 0; i--) {
+            if (isNew(sServices.get(i).serviceInfo)) {
+                return true;
+            }
         }
+        return false;
+    }
 
-        List<ServiceInfo> serviceInfos = ServiceFinder.getNewAddedServices(context);
-        if (serviceInfos != null && serviceInfos.size() >= 0) {
-            for (ServiceInfo serviceInfo : serviceInfos) {
-                List<IntentFilter> intentFilters = ServiceFinder.getIntentFilter(context,
-                        serviceInfo);
-                if (intentFilters != null && intentFilters.size() > 0) {
-                    for (IntentFilter intentFilter : intentFilters) {
-                        int match = intentFilter.match(context.getContentResolver(), intent,
-                                true, "");
-                        if (match >= 0) {
-                            return serviceInfo;
-                        }
+    public static ServiceInfo resolveNewServiceInfo(Context context, Intent intent) {
+        parsePackage(context);
+        getAppServices(context);
+
+        for (Service service : sServices) {
+            if (!isNew(service.serviceInfo)) {
+                continue;
+            }
+
+            List<IntentFilter> intentFilters = service.filters;
+            if (intentFilters != null && intentFilters.size() > 0) {
+                for (IntentFilter intentFilter : intentFilters) {
+                    if (intentFilter.match(context.getContentResolver(), intent,
+                            true, "") >= 0) {
+                        return service.serviceInfo;
                     }
-                } else {
-                    if (componentName != null && serviceInfo.name.equals(componentName
-                            .getClassName())) {
-                        return serviceInfo;
-                    }
+                }
+            } else {
+                ComponentName componentName = intent.getComponent();
+                if (componentName != null && service.serviceInfo.name.equals(componentName
+                        .getClassName())) {
+                    return service.serviceInfo;
                 }
             }
         }
+
         return null;
+    }
+
+    private static boolean isNew(ServiceInfo serviceInfo) {
+        // diff metadata ??
+        for (int i = ArrayUtil.length(sHostServices) - 1; i >= 0; i--) {
+            if (serviceInfo.name.equals(sHostServices[i].name)) {
+                return false;
+            }
+        }
+        return true;
     }
 }

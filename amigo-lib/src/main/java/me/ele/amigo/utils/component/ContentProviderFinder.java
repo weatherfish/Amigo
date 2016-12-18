@@ -6,17 +6,14 @@ import android.content.pm.PackageManager;
 import android.content.pm.ProviderInfo;
 import android.util.Log;
 
-import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import me.ele.amigo.PatchApks;
+import me.ele.amigo.reflect.FieldUtils;
 import me.ele.amigo.reflect.MethodUtils;
 import me.ele.amigo.utils.ArrayUtil;
 
-import static android.content.Context.MODE_MULTI_PROCESS;
-import static me.ele.amigo.Amigo.SP_NAME;
-import static me.ele.amigo.Amigo.WORKING_PATCH_APK_CHECKSUM;
 import static me.ele.amigo.compat.ActivityThreadCompat.instance;
 
 public class ContentProviderFinder extends ComponentFinder {
@@ -37,21 +34,48 @@ public class ContentProviderFinder extends ComponentFinder {
     }
 
     public static ProviderInfo[] getNewContentProvider(Context context) {
-        if (!isHotfixApkValid(context)) {
+        parsePackage(context);
+        ProviderInfo[] providersInPatch = getProviderInfo(context, sProviders);
+        ProviderInfo[] providersInHost = getAppContentProvider(context);
+
+        if (ArrayUtil.isEmpty(providersInPatch)) {
             return null;
         }
 
-        PackageManager pm = context.getPackageManager();
-        String workingPatchApkChecksum = context.getSharedPreferences(SP_NAME, MODE_MULTI_PROCESS)
-                .getString(WORKING_PATCH_APK_CHECKSUM, "");
-        File patchApkFile = PatchApks.getInstance(context).patchFile(workingPatchApkChecksum);
-        if (patchApkFile == null) {
+        if (ArrayUtil.isEmpty(providersInHost)) {
+            return providersInPatch;
+        }
+
+        ArrayList<ProviderInfo> newProviders = new ArrayList<>();
+        for (ProviderInfo patchProvider : providersInPatch) {
+            boolean isNew = true;
+            for (ProviderInfo hostProvider : providersInHost) {
+                if (hostProvider.name.equals(patchProvider.name)) {
+                    isNew = false;
+                    break;
+                }
+            }
+            if (isNew) newProviders.add(patchProvider);
+        }
+        return newProviders.toArray(new ProviderInfo[newProviders.size()]);
+    }
+
+    private static ProviderInfo[] getProviderInfo(Context context, List<Object> components) {
+        int size = components == null ? 0 : components.size();
+        if (size == 0) {
             return null;
         }
 
-        String archiveFilePath = patchApkFile.getAbsolutePath();
-        PackageInfo info = pm.getPackageArchiveInfo(archiveFilePath, PackageManager.GET_PROVIDERS);
-        return info.providers;
+        final ProviderInfo[] providerInfos = new ProviderInfo[size];
+        try {
+            for (int i = 0; i < size; i++) {
+                providerInfos[i] = (ProviderInfo) FieldUtils.readField(components.get(i),
+                        "info");
+            }
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
+        return providerInfos;
     }
 
     public static void installPatchContentProviders(Context context) {

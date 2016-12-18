@@ -1,4 +1,3 @@
-#Amigo Usage
 
 [中文版](https://github.com/eleme/Amigo/blob/master/README_zh.md#amigo)
 
@@ -6,9 +5,11 @@
 
 [changelog](https://github.com/eleme/Amigo/blob/master/CHANGELOG.md)
 
+[Amigo Service Platform](https://amigo.ele.me) (Amigo backend service is online finally :v:)
+
 ![amigo.png](http://amigotheband.com/wp-content/uploads/2015/02/logo_amigo-yellow.png)  
 
-Amigo is a hotfix library which can fix almost everything for your Android app.
+Amigo is a hotfix library which can fix everything for your Android app
 
 ## How to use 
 ### Download
@@ -21,7 +22,7 @@ buildscript {
     }
     
     dependencies {
-        classpath 'me.ele:amigo:0.5.0'
+        classpath 'me.ele:amigo:0.6.2'
     }
 }
 ```
@@ -34,9 +35,23 @@ apply plugin: 'me.ele.amigo'
 android {
 ...
 }
+
+//if you don't want use amigo in dev, set this value to true
+//you can define this extension in your mybuild.gradle as to distinguish debug & release build
+amigo {
+    disable false //default false
+}
+
 ```
 
-### Customize loading page
+
+### Compatibility
+
+- Supports All Devices From ECLAIR `2.1` to Nougat `7.1`
+- Even support next Android version, no matter small or big change. So Cool, Aha :v:
+- Android 3.0 isn't supported
+
+### Customize loading page(optional)
 Some time-consuming tasks are handled in a separate process to avoid ANR, you can customize the loading activity by add the follow code into your AndroidManifest.xml:
 
 ```xml
@@ -47,18 +62,26 @@ Some time-consuming tasks are handled in a separate process to avoid ANR, you ca
 <meta-data
     android:name="amigo_theme"
     android:value="{your-theme-name}" />
+ 
+<meta-data
+    android:name="amigo_orientation"
+    android:value="{your-custom-orientation}"/>
 ```
+
+**Note**: 
+
+- These three `meta-data` is defined in your personal `AndroidManifest.xml` of app module if necessary
+- orientation's value must be in [screenOrientation](https://developer.android.com/guide/topics/manifest/activity-element.html#screen)
 
 ### Make hotfix work
 There are two ways to make hotfix work.
 
 * if you don't need hotfix work immediately
  
-    you just need to download new apk file to /data/data/{your pkg}/files/amigo/demo.apk,
-	when app restarts next time, hotfix apk will be loaded as fresh as new.
+  you just need to download new apk file, hotfix apk will be loaded as fresh as new when app restarts next time
 	
 	```java
-    Amigo.workLater(context, patchApkFile);
+    Amigo.workLater(context, patchApkFile, callback);
     ```
     
 * work immediately, App will restart immediately
@@ -114,15 +137,19 @@ There are two gradle tasks provided in the app/build.gradle, `:app:runHost`, `:a
         ```
         
  -  Instant Run conflicts with Amigo, so disable Instant Run when used with amigo
+ 
+ -  Amigo doesn't support Honeycomb `3.0`
+    * Android 3.0 is a version with full of bugs, & Google has closed Android 3.0 Honeycomb.
+    
  - `RemoteViews`'s layout change in `notification` & `widget`is not support   
-    any resource id in here should be used with ```java RCompat.getHostIdentifier(Context context, int id) ```
+    * any resource id in here should be used with ```java RCompat.getHostIdentifier(Context context, int id) ```
 
 ## Retrieve hotfix file
 
 - make it simple, you just need a fully new apk
 
 - to save the internet traffic, you may just want to download a diff file
-  [bspatch](https://github.com/eleme/bspatch) is an option for you
+  [bspatch](https://github.com/eleme/bspatch) (`support whole apk diff & fine-grained diff in apk`)is an option for you
   
 
 ## Inspired by
