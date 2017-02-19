@@ -10,7 +10,9 @@ import android.content.pm.ActivityInfo;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.UserHandle;
+import android.text.TextUtils;
 import android.util.Log;
+import android.util.Pair;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -18,6 +20,8 @@ import java.lang.reflect.Method;
 import me.ele.amigo.reflect.FieldUtils;
 import me.ele.amigo.stub.ActivityStub;
 import me.ele.amigo.utils.component.ActivityFinder;
+
+import static me.ele.amigo.utils.component.ActivityFinder.getActivityInfoInNewApp;
 
 public class AmigoInstrumentation extends Instrumentation implements IInstrumentation {
 
@@ -39,28 +43,17 @@ public class AmigoInstrumentation extends Instrumentation implements IInstrument
         this.oldInstrumentation = oldInstrumentation;
     }
 
-    private boolean isPatchedActivity(Context who, Intent intent) {
-        ComponentName componentName = intent.getComponent();
-        if (componentName == null) {
-            return false;
-        }
-
-        ActivityInfo[] activityInfos = ActivityFinder.getAppActivities(who);
-        for (ActivityInfo activityInfo : activityInfos) {
-            if (activityInfo.name.equals(componentName.getClassName())) {
-                return false;
-            }
-        }
-
-        return ActivityFinder.getActivityInfoInNewApp(who, componentName.getClassName()) != null;
-    }
-
     private Intent wrapIntent(Context who, Intent intent) {
         Amigo.rollAmigoBack(who);
 
-        if (!isPatchedActivity(who, intent)) {
+        Pair<Boolean, Intent> result = getRealIntent(who, intent);
+        if (result == null) {
+            return null;
+        }
+        if (result.first) {
             return intent;
         }
+
         ComponentName componentName = intent.getComponent();
         ActivityStub.recycleActivityStub(getActivityInfo(who, componentName.getClassName()));
         Class stubClazz = getDelegateActivityName(who, componentName.getClassName());
@@ -70,13 +63,47 @@ public class AmigoInstrumentation extends Instrumentation implements IInstrument
         }
 
         Intent stubIntent = new Intent();
-        stubIntent.setComponent(new ComponentName(componentName.getPackageName(), stubClazz
-                .getName()));
+        stubIntent.setComponent(new ComponentName(componentName.getPackageName(), stubClazz.getName()));
         stubIntent.putExtra(EXTRA_TARGET_INTENT, intent);
         stubIntent.setFlags(intent.getFlags());
         intent.putExtra(EXTRA_STUB_NAME, stubClazz);
         ActivityStub.onActivityCreated(stubClazz, null, componentName.getClassName());
         return stubIntent;
+    }
+
+    private Pair<Boolean, Intent> getRealIntent(Context who, Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+        ComponentName componentName = intent.getComponent();
+        if (componentName == null) {
+            componentName = intent.resolveActivity(who.getPackageManager());
+            intent.setComponent(componentName);
+        }
+
+        if (componentName != null) {
+            //search from host
+            ActivityInfo[] activityInfos = ActivityFinder.getAppActivities(who);
+            for (ActivityInfo activityInfo : activityInfos) {
+                if (activityInfo.name.equals(componentName.getClassName())) {
+                    boolean isAlias = !TextUtils.isEmpty(activityInfo.targetActivity);
+                    if (!isAlias) {
+                        return new Pair<>(true, intent);
+                    } else {
+                        intent.setComponent(new ComponentName(componentName.getPackageName(), activityInfo.targetActivity));
+                        return getRealIntent(who, intent);
+                    }
+                }
+            }
+        }
+
+        //search from patch
+        ActivityInfo info = getActivityInfoInNewApp(who, intent);
+        if (info == null) {
+            return new Pair<>(true, intent);
+        }
+        intent.setComponent(new ComponentName(who.getPackageName(), info.name));
+        return new Pair<>(false, intent);
     }
 
     @Override
@@ -249,7 +276,7 @@ public class AmigoInstrumentation extends Instrumentation implements IInstrument
             targetClassName = context.getPackageName() + targetClassName;
         }
 
-        ActivityInfo info = ActivityFinder.getActivityInfoInNewApp(context, targetClassName);
+        ActivityInfo info = getActivityInfoInNewApp(context, targetClassName);
         if (info == null) {
             throw new RuntimeException(String.format("cannot find %s in apk", targetClassName));
         }

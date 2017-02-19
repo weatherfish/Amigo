@@ -7,8 +7,14 @@ import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.text.TextUtils;
 
 import java.util.List;
+
+import static android.content.IntentFilter.NO_MATCH_ACTION;
+import static android.content.IntentFilter.NO_MATCH_CATEGORY;
+import static android.content.IntentFilter.NO_MATCH_DATA;
+import static android.content.IntentFilter.NO_MATCH_TYPE;
 
 public class ActivityFinder extends ComponentFinder {
 
@@ -21,15 +27,8 @@ public class ActivityFinder extends ComponentFinder {
         }
 
         try {
-            PackageManager pm = context.getPackageManager();
-            /*
-             * Notice :
-             * will not return the activity-info of a component which is declared disabled in
-             * manifest and has never been set to enabled state dynamically.
-            */
-            PackageInfo info =
-                    pm.getPackageInfo(context.getPackageName(), PackageManager.GET_ACTIVITIES |
-                            PackageManager.GET_META_DATA);
+            PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(),
+                    PackageManager.GET_ACTIVITIES | PackageManager.GET_META_DATA);
             return sHostActivities = info.activities;
         } catch (PackageManager.NameNotFoundException e) {
             e.printStackTrace();
@@ -91,13 +90,9 @@ public class ActivityFinder extends ComponentFinder {
     }
 
     public static ComponentName getLauncherComponent(Context context) {
-        Intent launcherIntent = context.getPackageManager()
-                .getLaunchIntentForPackage(context.getPackageName());
-        ActivityInfo activityInfo =
-                launcherIntent.resolveActivityInfo(context.getPackageManager(), 0);
-        String className =
-                activityInfo.targetActivity != null ? activityInfo.targetActivity
-                        : activityInfo.name;
+        Intent launcherIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+        ActivityInfo activityInfo = launcherIntent.resolveActivityInfo(context.getPackageManager(), 0);
+        String className = activityInfo.targetActivity != null ? activityInfo.targetActivity : activityInfo.name;
         return new ComponentName(context.getPackageName(), className);
     }
 
@@ -109,10 +104,46 @@ public class ActivityFinder extends ComponentFinder {
 
         for (Activity activity : sActivities) {
             ActivityInfo activityInfo = activity.activityInfo;
-            if (activityInfo.name.equals(activityClassName)) {
+            if (!activityInfo.name.equals(activityClassName)) {
+                continue;
+            }
+            boolean isAlias = !TextUtils.isEmpty(activityInfo.targetActivity);
+            if (!isAlias) {
                 return activityInfo;
+            } else {
+                return getActivityInfoInNewApp(context, activityInfo.targetActivity);
             }
         }
         return null;
+    }
+
+    public static ActivityInfo getActivityInfoInNewApp(Context context, Intent intent) {
+        if (intent == null) {
+            return null;
+        }
+        if (intent.getComponent() != null) {
+            return getActivityInfoInNewApp(context, intent.getComponent().getClassName());
+        }
+
+        parsePackage(context);
+        if (sActivities.isEmpty()) {
+            return null;
+        }
+
+        for (Activity activity : sActivities) {
+            List<IntentFilter> filters = activity.filters;
+            if (filters == null || filters.size() == 0) {
+                continue;
+            }
+            for (IntentFilter filter : filters) {
+                int match = filter.match(null, intent, false, "filter_match_tag");
+                if (match != NO_MATCH_TYPE && match != NO_MATCH_DATA
+                        && match != NO_MATCH_ACTION && match != NO_MATCH_CATEGORY) {
+                    return getActivityInfoInNewApp(context, activity.activityInfo.name);
+                }
+            }
+        }
+        return null;
+
     }
 }
